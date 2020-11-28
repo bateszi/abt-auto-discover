@@ -1,0 +1,8 @@
+{
+  "db": {
+    "user": "root",
+    "pass": "root",
+    "server": "localhost:3318",
+    "dbName": "rss_aggregator"
+  }
+}
