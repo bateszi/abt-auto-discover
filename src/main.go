@@ -381,8 +381,49 @@ func getRelevancyScore(site ExternalPage) int {
 	return ttlScore
 }
 
+func getRssFeedUrl(site ExternalPage) string {
+	var rssFeedUrl string
+	hasRssFeed := false
+
+	r := bytes.NewReader(site.Html)
+	tokenizer := html.NewTokenizer(r)
+
+	for {
+		tokenType := tokenizer.Next()
+
+		if tokenType == html.ErrorToken {
+			err := tokenizer.Err()
+
+			if err == io.EOF {
+				break
+			}
+		}
+
+		token := tokenizer.Token()
+
+		if token.Data == "link" && !hasRssFeed {
+			linkHref := ""
+
+			for i := range token.Attr {
+				if token.Attr[i].Key == "type" && token.Attr[i].Val == "application/rss+xml" {
+					hasRssFeed = true
+				} else if token.Attr[i].Key == "href" {
+					linkHref = token.Attr[i].Val
+				}
+			}
+
+			if hasRssFeed {
+				rssFeedUrl = linkHref
+				break
+			}
+		}
+	}
+
+	return rssFeedUrl
+}
+
 // Add the site to the queue for review
-func addSiteToReviewQueue(db *sql.DB, site ExternalPage, score int) (bool, error) {
+func addSiteToReviewQueue(db *sql.DB, site ExternalPage, score int, rssFeedUrl string) (bool, error) {
 	prospectId := 0
 	existingScore := 0
 	encountered := 1
@@ -402,7 +443,7 @@ func addSiteToReviewQueue(db *sql.DB, site ExternalPage, score int) (bool, error
 		encountered++
 
 		stmt, err := db.Prepare("UPDATE `discovered_sites_queue` " +
-			"SET `score` = ?, `encountered` = ? " +
+			"SET `score` = ?, `encountered` = ?, `feed_url` = ? " +
 			"WHERE `fqdn` = ?")
 
 		if err != nil {
@@ -412,6 +453,7 @@ func addSiteToReviewQueue(db *sql.DB, site ExternalPage, score int) (bool, error
 		_, err = stmt.Exec(
 			existingScore,
 			encountered,
+			rssFeedUrl,
 			site.Url.Url.Host,
 		)
 
@@ -420,7 +462,7 @@ func addSiteToReviewQueue(db *sql.DB, site ExternalPage, score int) (bool, error
 		}
 	} else {
 		stmt, err := db.Prepare(
-			"INSERT INTO `discovered_sites_queue` (`fqdn`, `score`, `encountered`) VALUES (?, ?, ?)",
+			"INSERT INTO `discovered_sites_queue` (`fqdn`, `score`, `encountered`, `feed_url`) VALUES (?, ?, ?, ?)",
 		)
 
 		if err != nil {
@@ -431,6 +473,7 @@ func addSiteToReviewQueue(db *sql.DB, site ExternalPage, score int) (bool, error
 			site.Url.Url.Host,
 			score,
 			encountered,
+			rssFeedUrl,
 		)
 
 		if err != nil {
@@ -513,8 +556,9 @@ func start() {
 
 			for _, fetchedPage := range fetchedPages {
 				relevancyScore := getRelevancyScore(fetchedPage)
+				rssFeedUrl := getRssFeedUrl(fetchedPage)
 
-				_, err := addSiteToReviewQueue(db, fetchedPage, relevancyScore)
+				_, err := addSiteToReviewQueue(db, fetchedPage, relevancyScore, rssFeedUrl)
 
 				if err != nil {
 					fmt.Println("there was an error adding site to queue", fetchedPage.Url.Link, err)
