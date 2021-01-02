@@ -96,8 +96,7 @@ func getPosts(db *sql.DB) ([]Post, error) {
 	getPostRows, err := db.Query(
 		"SELECT pk_post_id, post_title, link, content " +
 			"FROM rss_aggregator.posts " +
-			"WHERE content != \"\" " +
-			"AND pub_date >= now() - INTERVAL 2 hour " +
+			"WHERE pub_date >= now() - INTERVAL 2 hour " +
 			"ORDER BY pub_date DESC",
 	)
 
@@ -129,12 +128,14 @@ func getPosts(db *sql.DB) ([]Post, error) {
 			return posts, nil
 		}
 
-		posts = append(posts, Post{
-			Id:    postId,
-			Url:   postUrl,
-			Title: title,
-			Body:  body,
-		})
+		if len(body) > 0 {
+			posts = append(posts, Post{
+				Id:    postId,
+				Url:   postUrl,
+				Title: title,
+				Body:  body,
+			})
+		}
 	}
 
 	return posts, nil
