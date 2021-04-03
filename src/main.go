@@ -49,6 +49,8 @@ type ExternalPage struct {
 	Fetched bool
 }
 
+var externalPagesWg sync.WaitGroup
+
 func makeDbConnection() (*sql.DB, error) {
 	encodedJson, err := ioutil.ReadFile("config/config.json")
 	if err != nil {
@@ -96,7 +98,7 @@ func getPosts(db *sql.DB) ([]Post, error) {
 	getPostRows, err := db.Query(
 		"SELECT pk_post_id, post_title, link, content " +
 			"FROM rss_aggregator.posts " +
-			"WHERE pub_date >= now() - INTERVAL 2 hour " +
+			"WHERE created >= now() - INTERVAL 2 hour " +
 			"ORDER BY pub_date DESC",
 	)
 
@@ -234,16 +236,26 @@ func isInBlacklist(db *sql.DB, candidate ExternalUrl) (bool, error) {
 func fetchExternalPages(candidates []ExternalUrl) ([]ExternalPage, error) {
 	var externalPages []ExternalPage
 
-	var externalPagesWg sync.WaitGroup
 	externalPageChannel := make(chan ExternalPage, len(candidates))
 
-	for _, candidate := range candidates {
-		externalPagesWg.Add(1)
+	ttlSitesToFetch := len(candidates)
+	step := 100
 
-		go fetchExternalPage(candidate, &externalPagesWg, externalPageChannel)
+	if step >= ttlSitesToFetch {
+		step = ttlSitesToFetch
 	}
 
-	externalPagesWg.Wait()
+	for i := 0; i < ttlSitesToFetch; i++ {
+		fetchExternalPageBatch(candidates[i:step], externalPageChannel)
+
+		i += 99
+		step += 100
+
+		if step >= ttlSitesToFetch {
+			step = ttlSitesToFetch
+		}
+	}
+
 	fmt.Println("finished fetching candidate pages")
 	close(externalPageChannel)
 
@@ -258,16 +270,26 @@ func fetchExternalPages(candidates []ExternalUrl) ([]ExternalPage, error) {
 	return externalPages, nil
 }
 
-func fetchExternalPage(candidate ExternalUrl, externalPagesWg *sync.WaitGroup, externalPageChannel chan<- ExternalPage) {
+func fetchExternalPageBatch(candidates []ExternalUrl, externalPageChannel chan<- ExternalPage) {
+	for _, candidate := range candidates {
+		externalPagesWg.Add(1)
+
+		go fetchExternalPage(candidate, externalPageChannel)
+	}
+
+	externalPagesWg.Wait()
+}
+
+func fetchExternalPage(candidate ExternalUrl, externalPageChannel chan<- ExternalPage) {
 	var externalPage = ExternalPage{
 		Url:     candidate,
 		Fetched: false,
 	}
 
-	defer func(externalPage *ExternalPage, externalPagesWg *sync.WaitGroup, externalPageChannel chan<- ExternalPage) {
+	defer func(externalPage *ExternalPage, externalPageChannel chan<- ExternalPage) {
 		externalPageChannel <- *externalPage
 		externalPagesWg.Done()
-	}(&externalPage, externalPagesWg, externalPageChannel)
+	}(&externalPage, externalPageChannel)
 
 	headReq, err := http.NewRequest("HEAD", candidate.Link, nil)
 
